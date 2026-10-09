@@ -7,7 +7,9 @@ import android.content.pm.ApplicationInfo
 import android.net.Uri
 import android.os.Bundle
 import android.os.Message
+import android.util.Log
 import android.view.ViewGroup
+import android.webkit.ConsoleMessage
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -36,6 +38,9 @@ import java.util.concurrent.Executors
  */
 class MainActivity : ComponentActivity() {
 
+    private val isDebuggable: Boolean
+        get() = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+
     private lateinit var webView: WebView
 
     /** Callback do <input type="file"> pendente, respondido quando o seletor de arquivos fecha. */
@@ -59,7 +64,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val isDebuggable = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
         WebView.setWebContentsDebuggingEnabled(isDebuggable)
 
         val assetLoader = WebViewAssetLoader.Builder()
@@ -103,6 +107,14 @@ class MainActivity : ComponentActivity() {
                 }
             }
             webChromeClient = object : WebChromeClient() {
+                override fun onConsoleMessage(message: ConsoleMessage?): Boolean {
+                    // Diagnóstico: console da página no logcat (só builds de debug).
+                    if (isDebuggable) {
+                        Log.d("PhotoCraftWeb", "${message?.message()} (${message?.sourceId()}:${message?.lineNumber()})")
+                    }
+                    return true
+                }
+
                 override fun onCreateWindow(
                     view: WebView?,
                     isDialog: Boolean,
