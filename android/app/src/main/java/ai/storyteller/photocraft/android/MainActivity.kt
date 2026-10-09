@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.net.Uri
 import android.os.Bundle
+import android.os.Message
 import android.view.ViewGroup
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -65,6 +66,10 @@ class MainActivity : ComponentActivity() {
                 setSupportZoom(false)
                 builtInZoomControls = false
                 displayZoomControls = false
+                // O PhotoCraft abre links (Discord, Ajuda, GitHub) com window.open("_blank").
+                // Sem isto o WebView ignora a chamada e o botão "não faz nada".
+                setSupportMultipleWindows(true)
+                javaScriptCanOpenWindowsAutomatically = true
             }
             webViewClient = object : WebViewClient() {
                 override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? =
@@ -79,6 +84,28 @@ class MainActivity : ComponentActivity() {
                 }
             }
             webChromeClient = object : WebChromeClient() {
+                override fun onCreateWindow(
+                    view: WebView?,
+                    isDialog: Boolean,
+                    isUserGesture: Boolean,
+                    resultMsg: Message?,
+                ): Boolean {
+                    val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
+                    // Janela temporária: só recebe a URL do link, que vai para o navegador externo.
+                    val popup = WebView(this@MainActivity)
+                    popup.webViewClient = object : WebViewClient() {
+                        override fun shouldOverrideUrlLoading(v: WebView?, request: WebResourceRequest?): Boolean {
+                            request?.url?.let { openExternally(it) }
+                            // Destruir só depois que o WebView terminar este callback.
+                            v?.let { view -> view.post { view.destroy() } }
+                            return true
+                        }
+                    }
+                    transport.webView = popup
+                    resultMsg.sendToTarget()
+                    return true
+                }
+
                 override fun onShowFileChooser(
                     webView: WebView?,
                     filePathCallback: ValueCallback<Array<Uri>>?,
