@@ -24,7 +24,7 @@ object AppUpdater {
     const val PREFS = "updates"
     const val KEY_SKIPPED = "skipped_version"
 
-    private const val REPO = "Scroatt/androCraft"
+    private const val REPO = "Scroatt/PhotoCraft-Mobilr"
     private const val TAG_PREFIX = "android-v"
     private const val RELEASES_URL = "https://api.github.com/repos/$REPO/releases?per_page=20"
 
