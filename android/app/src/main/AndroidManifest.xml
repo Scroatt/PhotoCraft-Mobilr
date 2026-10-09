@@ -1,7 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Sem permissão de INTERNET: o editor roda inteiro offline, a partir dos assets do APK. -->
+    <!--
+      INTERNET: só para checar e baixar atualizações do próprio app (GitHub Releases).
+      O WebView bloqueia qualquer requisição que a página faça fora do bundle local.
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Necessário para abrir o instalador com a atualização baixada. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:allowBackup="false"
@@ -20,6 +26,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Entrega o APK baixado ao instalador do Android (apenas o cache do app). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
     </application>
 

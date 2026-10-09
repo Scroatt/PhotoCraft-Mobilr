@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PhotoCraft</string>
+    <string name="update_title">Atualização disponível</string>
+    <string name="update_message">O PhotoCraft %1$s está disponível (você tem a %2$s). Atualizar agora?</string>
+    <string name="update_now">Atualizar</string>
+    <string name="update_later">Depois</string>
+    <string name="update_skip">Ignorar esta versão</string>
+    <string name="update_downloading">Baixando atualização…</string>
+    <string name="update_failed">Não foi possível baixar a atualização. Verifique a conexão e tente de novo.</string>
+    <string name="update_allow_sources">Permita a instalação de apps para o PhotoCraft e abra o app de novo para atualizar.</string>
+</resources>

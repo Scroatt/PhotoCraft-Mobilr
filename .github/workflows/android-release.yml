@@ -1,0 +1,82 @@
+name: Android release
+
+# Publica o APK assinado numa GitHub Release. É o que o app consulta para se atualizar.
+# Para publicar: crie a tag android-v<versão> (ex.: android-v0.5.1) apontando para o commit
+# desejado e dê push nela. Veja android/README.md, seção "Publicar uma versão".
+
+on:
+  push:
+    tags:
+      - "android-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Signed release APK
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check signing secrets
+        run: |
+          for name in KEYSTORE_B64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Secret ausente para a assinatura ($name). Veja android/README.md, seção 'Assinatura'."
+              exit 1
+            fi
+          done
+
+      - name: Version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#android-v}"
+          if ! [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+            echo "::error::Tag '$GITHUB_REF_NAME' inválida. Use android-v<versão>, ex.: android-v0.5.1"
+            exit 1
+          fi
+          echo "ANDROID_VERSION_NAME=$VERSION" >> "$GITHUB_ENV"
+          # Código de versão sempre crescente: o Android só instala versões com código maior.
+          echo "ANDROID_VERSION_CODE=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+
+      - name: Decode the release keystore
+        run: |
+          KEYSTORE="$RUNNER_TEMP/photocraft-release.jks"
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE"
+          chmod 600 "$KEYSTORE"
+          echo "ANDROID_KEYSTORE_FILE=$KEYSTORE" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.10.2
+
+      - name: Fetch the PhotoCraft web build
+        run: scripts/fetch-web.sh
+
+      - name: Build signed release APK
+        working-directory: android
+        run: gradle --no-daemon --console=plain :app:assembleRelease
+
+      - name: Check the APK is signed with the release key
+        run: |
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)"
+          "$APKSIGNER" verify --print-certs android/app/build/outputs/apk/release/app-release.apk
+
+      - name: Publish the GitHub Release
+        run: |
+          APK="photocraft-android-${ANDROID_VERSION_NAME}.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "$APK"
+          gh release create "$GITHUB_REF_NAME" "$APK" \
+            --title "PhotoCraft Android ${ANDROID_VERSION_NAME}" \
+            --generate-notes

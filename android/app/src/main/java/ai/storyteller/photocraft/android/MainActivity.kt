@@ -1,5 +1,6 @@
 package ai.storyteller.photocraft.android
 
+import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -14,6 +15,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.ActivityResult
@@ -23,6 +25,11 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import org.json.JSONException
+import org.json.JSONObject
+import java.io.ByteArrayInputStream
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 /**
  * Abre o PhotoCraft web (embutido no APK) em tela cheia dentro de um WebView.
@@ -34,14 +41,19 @@ class MainActivity : ComponentActivity() {
     /** Callback do <input type="file"> pendente, respondido quando o seletor de arquivos fecha. */
     private var pendingFileCallback: ValueCallback<Array<Uri>>? = null
 
+    /** Rede de fundo: checagem de atualização e download do APK. */
+    private val backgroundExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+
     private val filePicker = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result: ActivityResult ->
         val uris = WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data)
         pendingFileCallback?.onReceiveValue(uris)
         pendingFileCallback = null
     }
 
-    private val downloadBridge = WebViewCompat.WebMessageListener { _, message, _, _, _ ->
-        DownloadBridge.onMessage(this, message.data)
+    /** Mensagens do script da página: teclado (type "keyboard") ou downloads de arquivos. */
+    private val nativeBridge = WebViewCompat.WebMessageListener { _, message, _, _, _ ->
+        val payload = message.data
+        if (payload != null) handleNativeMessage(payload)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -57,6 +69,9 @@ class MainActivity : ComponentActivity() {
         webView = WebView(this).apply {
             setBackgroundColor(0xFF262626.toInt())
             layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            // Necessário para o teclado: a WebView precisa poder receber foco.
+            isFocusable = true
+            isFocusableInTouchMode = true
             settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
@@ -72,8 +87,12 @@ class MainActivity : ComponentActivity() {
                 javaScriptCanOpenWindowsAutomatically = true
             }
             webViewClient = object : WebViewClient() {
-                override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? =
-                    request?.url?.let { assetLoader.shouldInterceptRequest(it) }
+                override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
+                    val uri = request?.url ?: return null
+                    // Só o bundle do app: a página não acessa a internet, mesmo com a permissão.
+                    if (uri.host != APP_HOST) return blockedResponse()
+                    return assetLoader.shouldInterceptRequest(uri)
+                }
 
                 override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                     val uri = request?.url ?: return true
@@ -125,12 +144,13 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // Canal de downloads e script de interceptação só para a origem do app.
+        // Scripts e canal nativo só para a origem do app.
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             WebViewCompat.addDocumentStartJavaScript(webView, DownloadBridge.DOCUMENT_START_SCRIPT, setOf(APP_ORIGIN))
+            WebViewCompat.addDocumentStartJavaScript(webView, KeyboardBridge.DOCUMENT_START_SCRIPT, setOf(APP_ORIGIN))
         }
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
-            WebViewCompat.addWebMessageListener(webView, DownloadBridge.OBJECT_NAME, setOf(APP_ORIGIN), downloadBridge)
+            WebViewCompat.addWebMessageListener(webView, DownloadBridge.OBJECT_NAME, setOf(APP_ORIGIN), nativeBridge)
         }
 
         // Mantém a área do editor fora das barras do sistema (o Android 15 desenha de ponta a ponta).
@@ -152,6 +172,7 @@ class MainActivity : ComponentActivity() {
         })
 
         webView.loadUrl(START_URL)
+        checkForUpdates()
     }
 
     override fun onResume() {
@@ -167,9 +188,83 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         pendingFileCallback?.onReceiveValue(null)
         pendingFileCallback = null
+        backgroundExecutor.shutdown()
         webView.destroy()
         super.onDestroy()
     }
+
+    private fun handleNativeMessage(payload: String) {
+        val json = try {
+            JSONObject(payload)
+        } catch (e: JSONException) {
+            return
+        }
+        if (json.optString("type") == KeyboardBridge.TYPE) {
+            KeyboardBridge.onMessage(this, webView, json.optString("value"))
+        } else {
+            DownloadBridge.onMessage(this, payload)
+        }
+    }
+
+    // region Atualização
+
+    /** Checa em segundo plano; se houver versão nova, pergunta ao usuário. Sem rede, não faz nada. */
+    private fun checkForUpdates() {
+        val skipped = getSharedPreferences(AppUpdater.PREFS, MODE_PRIVATE).getString(AppUpdater.KEY_SKIPPED, null)
+        backgroundExecutor.execute {
+            val release = try {
+                AppUpdater.findNewerRelease(BuildConfig.VERSION_NAME, skipped)
+            } catch (e: Exception) {
+                null
+            }
+            if (release != null) {
+                runOnUiThread { if (!isFinishing) askToUpdate(release) }
+            }
+        }
+    }
+
+    private fun askToUpdate(release: AppUpdater.Release) {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.update_title)
+            .setMessage(getString(R.string.update_message, release.version, BuildConfig.VERSION_NAME))
+            .setPositiveButton(R.string.update_now) { _, _ -> downloadAndInstall(release) }
+            .setNegativeButton(R.string.update_later, null)
+            .setNeutralButton(R.string.update_skip) { _, _ ->
+                getSharedPreferences(AppUpdater.PREFS, MODE_PRIVATE).edit()
+                    .putString(AppUpdater.KEY_SKIPPED, release.version)
+                    .apply()
+            }
+            .show()
+    }
+
+    private fun downloadAndInstall(release: AppUpdater.Release) {
+        val progress = AlertDialog.Builder(this)
+            .setMessage(R.string.update_downloading)
+            .setCancelable(false)
+            .show()
+        backgroundExecutor.execute {
+            val apk = try {
+                AppUpdater.download(this@MainActivity, release)
+            } catch (e: Exception) {
+                null
+            }
+            runOnUiThread {
+                progress.dismiss()
+                if (apk == null) {
+                    Toast.makeText(this, R.string.update_failed, Toast.LENGTH_LONG).show()
+                } else if (!AppUpdater.install(this, apk)) {
+                    Toast.makeText(this, R.string.update_allow_sources, Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    // endregion
+
+    /** Resposta vazia para qualquer requisição de rede que a página tente fazer. */
+    private fun blockedResponse() = WebResourceResponse(
+        "text/plain", "utf-8", 403, "Blocked", emptyMap(), ByteArrayInputStream(ByteArray(0))
+    )
 
     private fun openExternally(uri: Uri) {
         if (uri.scheme !in setOf("http", "https", "mailto")) return
