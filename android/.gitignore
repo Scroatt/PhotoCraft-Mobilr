@@ -1,0 +1,15 @@
+# Gradle / Android Studio
+.gradle/
+build/
+app/build/
+local.properties
+.idea/
+*.iml
+.DS_Store
+
+# Build artifacts
+*.apk
+*.aab
+
+# Bundle web baixado por scripts/fetch-web.sh (~20 MiB, gerado; não versionar)
+app/src/main/assets/web/

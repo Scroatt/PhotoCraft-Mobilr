@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Mesma cor de fundo da página web (#262626), para não haver flash branco. -->
+    <style name="Theme.PhotoCraft" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#262626</item>
+        <item name="android:statusBarColor">#262626</item>
+        <item name="android:navigationBarColor">#262626</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>
